@@ -120,8 +120,8 @@ void Matrix_update(void)
 
 void Euler_angles(void)
 {
-  pitch = -asin(DCM_Matrix[2][0]);
-  roll = atan2(DCM_Matrix[2][1],DCM_Matrix[2][2]);
-  yaw = atan2(DCM_Matrix[1][0],DCM_Matrix[0][0]);
+  rpy_msg.pitch = -asin(DCM_Matrix[2][0]);
+  rpy_msg.roll = atan2(DCM_Matrix[2][1],DCM_Matrix[2][2]);
+  rpy_msg.yaw = atan2(DCM_Matrix[1][0],DCM_Matrix[0][0]);
 }
 

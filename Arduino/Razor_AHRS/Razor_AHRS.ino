@@ -160,7 +160,7 @@
 //#define HW__VERSION_CODE 10125 // SparkFun "9DOF Razor IMU" version "SEN-10125" (HMC5843 magnetometer)
 //#define HW__VERSION_CODE 10736 // SparkFun "9DOF Razor IMU" version "SEN-10736" (HMC5883L magnetometer)
 //#define HW__VERSION_CODE 10183 // SparkFun "9DOF Sensor Stick" version "SEN-10183" (HMC5843 magnetometer)
-//#define HW__VERSION_CODE 10321 // SparkFun "9DOF Sensor Stick" version "SEN-10321" (HMC5843 magnetometer)
+#define HW__VERSION_CODE 10321 // SparkFun "9DOF Sensor Stick" version "SEN-10321" (HMC5843 magnetometer)
 //#define HW__VERSION_CODE 10724 // SparkFun "9DOF Sensor Stick" version "SEN-10724" (HMC5883L magnetometer)
 
 
@@ -194,18 +194,6 @@ int output_format = OUTPUT__FORMAT_TEXT;
 // If set true, an error message will be output if we fail to read sensor data.
 // Message format: "!ERR: reading <sensor>", followed by "\r\n".
 boolean output_errors = false;  // true or false
-
-// Bluetooth
-// You can set this to true, if you have a Rovering Networks Bluetooth Module attached.
-// The connect/disconnect message prefix of the module has to be set to "#".
-// (Refer to manual, it can be set like this: SO,#)
-// When using this, streaming output will only be enabled as long as we're connected. That way
-// receiver and sender are synchronzed easily just by connecting/disconnecting.
-// It is not necessary to set this! It just makes life easier when writing code for
-// the receiving side. The Processing test sketch also works without setting this.
-// NOTE: When using this, OUTPUT__STARTUP_STREAM_ON has no effect!
-#define OUTPUT__HAS_RN_BLUETOOTH false  // true or false
-
 
 // SENSOR CALIBRATION
 /*****************************************************************/
@@ -305,6 +293,8 @@ const float magn_ellipsoid_transform[3][3] = {{0.902, -0.00354, 0.000636}, {-0.0
 #endif
 
 #include <Wire.h>
+#include <ros.h>
+#include <control/rpy.h>
 
 // Sensor calibration scale and offset values
 #define ACCEL_X_OFFSET ((ACCEL_X_MIN + ACCEL_X_MAX) / 2.0f)
@@ -338,6 +328,11 @@ const float magn_ellipsoid_transform[3][3] = {{0.902, -0.00354, 0.000636}, {-0.0
 #define TO_RAD(x) (x * 0.01745329252)  // *pi/180
 #define TO_DEG(x) (x * 57.2957795131)  // *180/pi
 
+// Ros variables
+ros::NodeHandle nh;
+control::rpy rpy_msg;
+ros::Publisher imu("imu", &rpy_msg);
+
 // Sensor variables
 float accel[3];  // Actually stores the NEGATED acceleration (equals gravity, if board not moving).
 float accel_min[3];
@@ -366,24 +361,14 @@ float DCM_Matrix[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
 float Update_Matrix[3][3] = {{0, 1, 2}, {3, 4, 5}, {6, 7, 8}};
 float Temporary_Matrix[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
-// Euler angles
-float yaw;
-float pitch;
-float roll;
-
 // DCM timing in the main loop
 unsigned long timestamp;
 unsigned long timestamp_old;
 float G_Dt; // Integration time for DCM algorithm
 
 // More output-state variables
-boolean output_stream_on;
-boolean output_single_on;
 int curr_calibration_sensor = 0;
 boolean reset_calibration_session_flag = true;
-int num_accel_errors = 0;
-int num_magn_errors = 0;
-int num_gyro_errors = 0;
 
 void read_sensors() {
   Read_Gyro(); // Read gyroscope
@@ -404,7 +389,7 @@ void reset_sensor_fusion() {
   
   // GET PITCH
   // Using y-z-plane-component/x-component of gravity vector
-  pitch = -atan2(accel[0], sqrt(accel[1] * accel[1] + accel[2] * accel[2]));
+  rpy_msg.pitch = -atan2(accel[0], sqrt(accel[1] * accel[1] + accel[2] * accel[2]));
 	
   // GET ROLL
   // Compensate pitch of gravity vector 
@@ -413,14 +398,14 @@ void reset_sensor_fusion() {
   // Normally using x-z-plane-component/y-component of compensated gravity vector
   // roll = atan2(temp2[1], sqrt(temp2[0] * temp2[0] + temp2[2] * temp2[2]));
   // Since we compensated for pitch, x-z-plane-component equals z-component:
-  roll = atan2(temp2[1], temp2[2]);
+  rpy_msg.roll = atan2(temp2[1], temp2[2]);
   
   // GET YAW
   Compass_Heading();
-  yaw = MAG_Heading;
+  rpy_msg.yaw = MAG_Heading;
   
   // Init rotation matrix
-  init_rotation_matrix(DCM_Matrix, yaw, pitch, roll);
+  init_rotation_matrix(DCM_Matrix, rpy_msg.yaw, rpy_msg.pitch, rpy_msg.roll);
 }
 
 // Apply calibration to raw sensor readings
@@ -468,25 +453,6 @@ void check_reset_calibration_session()
   reset_calibration_session_flag = false;
 }
 
-void turn_output_stream_on()
-{
-  output_stream_on = true;
-  digitalWrite(STATUS_LED_PIN, HIGH);
-}
-
-void turn_output_stream_off()
-{
-  output_stream_on = false;
-  digitalWrite(STATUS_LED_PIN, LOW);
-}
-
-// Blocks until another byte is available on serial port
-char readChar()
-{
-  while (Serial.available() < 1) { } // Block
-  return Serial.read();
-}
-
 void setup()
 {
   // Init serial output
@@ -507,113 +473,13 @@ void setup()
   delay(20);  // Give sensors enough time to collect data
   reset_sensor_fusion();
 
-  // Init output
-#if (OUTPUT__HAS_RN_BLUETOOTH == true) || (OUTPUT__STARTUP_STREAM_ON == false)
-  turn_output_stream_off();
-#else
-  turn_output_stream_on();
-#endif
+  nh.initNode();
+  nh.advertise(imu);
 }
 
 // Main loop
 void loop()
 {
-  // Read incoming control messages
-  if (Serial.available() >= 2)
-  {
-    if (Serial.read() == '#') // Start of new control message
-    {
-      int command = Serial.read(); // Commands
-      if (command == 'f') // request one output _f_rame
-        output_single_on = true;
-      else if (command == 's') // _s_ynch request
-      {
-        // Read ID
-        byte id[2];
-        id[0] = readChar();
-        id[1] = readChar();
-        
-        // Reply with synch message
-        Serial.print("#SYNCH");
-        Serial.write(id, 2);
-        Serial.println();
-      }
-      else if (command == 'o') // Set _o_utput mode
-      {
-        char output_param = readChar();
-        if (output_param == 'n')  // Calibrate _n_ext sensor
-        {
-          curr_calibration_sensor = (curr_calibration_sensor + 1) % 3;
-          reset_calibration_session_flag = true;
-        }
-        else if (output_param == 't') // Output angles as _t_ext
-        {
-          output_mode = OUTPUT__MODE_ANGLES;
-          output_format = OUTPUT__FORMAT_TEXT;
-        }
-        else if (output_param == 'b') // Output angles in _b_inary format
-        {
-          output_mode = OUTPUT__MODE_ANGLES;
-          output_format = OUTPUT__FORMAT_BINARY;
-        }
-        else if (output_param == 'c') // Go to _c_alibration mode
-        {
-          output_mode = OUTPUT__MODE_CALIBRATE_SENSORS;
-          reset_calibration_session_flag = true;
-        }
-        else if (output_param == 's') // Output _s_ensor values
-        {
-          char values_param = readChar();
-          char format_param = readChar();
-          if (values_param == 'r')  // Output _r_aw sensor values
-            output_mode = OUTPUT__MODE_SENSORS_RAW;
-          else if (values_param == 'c')  // Output _c_alibrated sensor values
-            output_mode = OUTPUT__MODE_SENSORS_CALIB;
-          else if (values_param == 'b')  // Output _b_oth sensor values (raw and calibrated)
-            output_mode = OUTPUT__MODE_SENSORS_BOTH;
-
-          if (format_param == 't') // Output values as _t_text
-            output_format = OUTPUT__FORMAT_TEXT;
-          else if (format_param == 'b') // Output values in _b_inary format
-            output_format = OUTPUT__FORMAT_BINARY;
-        }
-        else if (output_param == '0') // Disable continuous streaming output
-        {
-          turn_output_stream_off();
-          reset_calibration_session_flag = true;
-        }
-        else if (output_param == '1') // Enable continuous streaming output
-        {
-          reset_calibration_session_flag = true;
-          turn_output_stream_on();
-        }
-        else if (output_param == 'e') // _e_rror output settings
-        {
-          char error_param = readChar();
-          if (error_param == '0') output_errors = false;
-          else if (error_param == '1') output_errors = true;
-          else if (error_param == 'c') // get error count
-          {
-            Serial.print("#AMG-ERR:");
-            Serial.print(num_accel_errors); Serial.print(",");
-            Serial.print(num_magn_errors); Serial.print(",");
-            Serial.println(num_gyro_errors);
-          }
-        }
-      }
-#if OUTPUT__HAS_RN_BLUETOOTH == true
-      // Read messages from bluetooth module
-      // For this to work, the connect/disconnect message prefix of the module has to be set to "#".
-      else if (command == 'C') // Bluetooth "#CONNECT" message (does the same as "#o1")
-        turn_output_stream_on();
-      else if (command == 'D') // Bluetooth "#DISCONNECT" message (does the same as "#o0")
-        turn_output_stream_off();
-#endif // OUTPUT__HAS_RN_BLUETOOTH == true
-    }
-    else
-    { } // Skip character
-  }
-
   // Time to read the sensors again?
   if((millis() - timestamp) >= OUTPUT__DATA_INTERVAL)
   {
@@ -629,38 +495,17 @@ void loop()
     if (output_mode == OUTPUT__MODE_CALIBRATE_SENSORS)  // We're in calibration mode
     {
       check_reset_calibration_session();  // Check if this session needs a reset
-      if (output_stream_on || output_single_on) output_calibration(curr_calibration_sensor);
     }
-    else if (output_mode == OUTPUT__MODE_ANGLES)  // Output angles
-    {
-      // Apply sensor calibration
-      compensate_sensor_errors();
-    
-      // Run DCM algorithm
-      Compass_Heading(); // Calculate magnetic heading
-      Matrix_update();
-      Normalize();
-      Drift_correction();
-      Euler_angles();
-      
-      if (output_stream_on || output_single_on) output_angles();
-    }
-    else  // Output sensor values
-    {      
-      if (output_stream_on || output_single_on) output_sensors();
-    }
-    
-    output_single_on = false;
-    
-#if DEBUG__PRINT_LOOP_TIME == true
-    Serial.print("loop time (ms) = ");
-    Serial.println(millis() - timestamp);
-#endif
+    // Apply sensor calibration
+    compensate_sensor_errors();
+
+    // Run DCM algorithm
+    Compass_Heading(); // Calculate magnetic heading
+    Matrix_update();
+    Normalize();
+    Drift_correction();
+    Euler_angles();
+
+    imu.publish(&rpy_msg);
   }
-#if DEBUG__PRINT_LOOP_TIME == true
-  else
-  {
-    Serial.println("waiting...");
-  }
-#endif
 }

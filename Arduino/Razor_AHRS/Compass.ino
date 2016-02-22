@@ -9,10 +9,10 @@ void Compass_Heading()
   float cos_pitch;
   float sin_pitch;
   
-  cos_roll = cos(roll);
-  sin_roll = sin(roll);
-  cos_pitch = cos(pitch);
-  sin_pitch = sin(pitch);
+  cos_roll = cos(rpy_msg.roll);
+  sin_roll = sin(rpy_msg.roll);
+  cos_pitch = cos(rpy_msg.pitch);
+  sin_pitch = sin(rpy_msg.pitch);
   
   // Tilt compensated magnetic field X
   mag_x = magnetom[0] * cos_pitch + magnetom[1] * sin_roll * sin_pitch + magnetom[2] * cos_roll * sin_pitch;

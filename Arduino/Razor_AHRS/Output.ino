@@ -6,17 +6,17 @@ void output_angles()
   if (output_format == OUTPUT__FORMAT_BINARY)
   {
     float ypr[3];  
-    ypr[0] = TO_DEG(yaw);
-    ypr[1] = TO_DEG(pitch);
-    ypr[2] = TO_DEG(roll);
+    ypr[0] = TO_DEG(rpy_msg.yaw);
+    ypr[1] = TO_DEG(rpy_msg.pitch);
+    ypr[2] = TO_DEG(rpy_msg.roll);
     Serial.write((byte*) ypr, 12);  // No new-line
   }
   else if (output_format == OUTPUT__FORMAT_TEXT)
   {
     Serial.print("#YPR=");
-    Serial.print(TO_DEG(yaw)); Serial.print(",");
-    Serial.print(TO_DEG(pitch)); Serial.print(",");
-    Serial.print(TO_DEG(roll)); Serial.println();
+    Serial.print(TO_DEG(rpy_msg.yaw)); Serial.print(",");
+    Serial.print(TO_DEG(rpy_msg.pitch)); Serial.print(",");
+    Serial.print(TO_DEG(rpy_msg.roll)); Serial.println();
   }
 }
 
